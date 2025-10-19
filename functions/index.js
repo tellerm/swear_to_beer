@@ -370,3 +370,476 @@ exports.onPlayerLeftScoreboard = onDocumentUpdated(
       }
     },
 );
+
+// Send notification when pending beer repayment is added
+exports.onPendingBeerRepaymentAdded = onDocumentUpdated(
+    {
+      document: "scoreboards/{scoreboardId}",
+      region: "europe-west3",
+    },
+    async (event) => {
+      const beforeData = event.data.before.data();
+      const afterData = event.data.after.data();
+
+      // Check if a new pending beer repayment was added
+      const beforePending = beforeData.pendingBeerRepayments || [];
+      const afterPending = afterData.pendingBeerRepayments || [];
+
+      if (afterPending.length <= beforePending.length) {
+        return null;
+      }
+
+      // Find the new pending repayment
+      const newRepayment = afterPending.find(
+          (repayment) => !beforePending.some((br) => br.id === repayment.id),
+      );
+
+      if (!newRepayment) {
+        return null;
+      }
+
+      try {
+        // Get all users
+        const usersSnapshot = await admin
+            .firestore()
+            .collection("users")
+            .get();
+        const users = {};
+        usersSnapshot.forEach((doc) => {
+          users[doc.id] = doc.data();
+        });
+
+        // Send notifications to all players except requester
+        const notifications = afterData.players.map(async (player) => {
+          const user = Object.values(users).find(
+              (u) => u.name === player.name &&
+                u.id !== newRepayment.requestedBy,
+          );
+
+          if (!user || !user.fcmToken) {
+            console.log(`Player ${player.name} has no FCM token`);
+            return null;
+          }
+
+          const message = {
+            data: {
+              type: "pending_beer_repayment",
+              scoreboardId: event.params.scoreboardId,
+              scoreboardName: afterData.name,
+              repaymentId: newRepayment.id,
+              title: "🍺 Beer Repayment Request",
+              body: `${newRepayment.requestedByName} wants to repay ` +
+                `${newRepayment.beers} beer(s) for ${newRepayment.playerName}`,
+            },
+            token: user.fcmToken,
+          };
+
+          await admin.messaging().send(message);
+          console.log(`Beer repayment notification sent to ${player.name}`);
+        });
+
+        await Promise.all(notifications);
+        return null;
+      } catch (error) {
+        console.error("Error sending beer repayment notification:", error);
+        return null;
+      }
+    },
+);
+
+// Send notification when point addition is rejected
+exports.onPointRejected = onDocumentUpdated(
+    {
+      document: "scoreboards/{scoreboardId}",
+      region: "europe-west3",
+    },
+    async (event) => {
+      const beforeData = event.data.before.data();
+      const afterData = event.data.after.data();
+
+      const beforePending = beforeData.pendingPointChanges || [];
+      const afterPending = afterData.pendingPointChanges || [];
+
+      // Check if a pending change was removed
+      if (afterPending.length >= beforePending.length) {
+        return null;
+      }
+
+      // Find the removed pending change
+      const removedChanges = beforePending.filter(
+          (beforeChange) => !afterPending.some(
+              (afterChange) => afterChange.id === beforeChange.id,
+          ),
+      );
+
+      if (removedChanges.length === 0) {
+        return null;
+      }
+
+      const removedChange = removedChanges[0];
+
+      // Check if the player's score changed
+      const beforePlayer = beforeData.players.find(
+          (p) => p.id === removedChange.playerId,
+      );
+      const afterPlayer = afterData.players.find(
+          (p) => p.id === removedChange.playerId,
+      );
+
+      // If score changed, it was confirmed, not rejected
+      if (beforePlayer && afterPlayer &&
+          beforePlayer.score !== afterPlayer.score) {
+        return null;
+      }
+
+      // Score didn't change, so it was rejected
+      try {
+        // Get all users
+        const usersSnapshot = await admin
+            .firestore()
+            .collection("users")
+            .get();
+        const users = {};
+        usersSnapshot.forEach((doc) => {
+          users[doc.id] = doc.data();
+        });
+
+        // Find the user who added the point
+        const requester = Object.values(users).find(
+            (u) => u.id === removedChange.addedBy,
+        );
+
+        if (!requester || !requester.fcmToken) {
+          console.log("Requester has no FCM token");
+          return null;
+        }
+
+        const message = {
+          notification: {
+            title: "❌ Point Request Rejected",
+            body: `Your request to add ${removedChange.points} ` +
+              `point(s) to ${removedChange.playerName} was rejected`,
+          },
+          data: {
+            type: "point_rejected",
+            scoreboardId: event.params.scoreboardId,
+            scoreboardName: afterData.name,
+          },
+          token: requester.fcmToken,
+        };
+
+        await admin.messaging().send(message);
+        console.log(`Point rejection notification sent`);
+        return null;
+      } catch (error) {
+        console.error("Error sending point rejection notification:", error);
+        return null;
+      }
+    },
+);
+
+// Send notification when beer repayment is rejected
+exports.onBeerRepaymentRejected = onDocumentUpdated(
+    {
+      document: "scoreboards/{scoreboardId}",
+      region: "europe-west3",
+    },
+    async (event) => {
+      const beforeData = event.data.before.data();
+      const afterData = event.data.after.data();
+
+      const beforePending = beforeData.pendingBeerRepayments || [];
+      const afterPending = afterData.pendingBeerRepayments || [];
+
+      // Check if a pending repayment was removed
+      if (afterPending.length >= beforePending.length) {
+        return null;
+      }
+
+      // Find the removed repayment
+      const removedRepayments = beforePending.filter(
+          (beforeRepayment) => !afterPending.some(
+              (afterRepayment) => afterRepayment.id === beforeRepayment.id,
+          ),
+      );
+
+      if (removedRepayments.length === 0) {
+        return null;
+      }
+
+      const removedRepayment = removedRepayments[0];
+
+      // Check if the player's score changed
+      const beforePlayer = beforeData.players.find(
+          (p) => p.id === removedRepayment.playerId,
+      );
+      const afterPlayer = afterData.players.find(
+          (p) => p.id === removedRepayment.playerId,
+      );
+
+      // If score changed, it was confirmed, not rejected
+      if (beforePlayer && afterPlayer &&
+          beforePlayer.score !== afterPlayer.score) {
+        return null;
+      }
+
+      // Score didn't change, so it was rejected
+      try {
+        // Get all users
+        const usersSnapshot = await admin
+            .firestore()
+            .collection("users")
+            .get();
+        const users = {};
+        usersSnapshot.forEach((doc) => {
+          users[doc.id] = doc.data();
+        });
+
+        // Find the user who requested repayment
+        const requester = Object.values(users).find(
+            (u) => u.id === removedRepayment.requestedBy,
+        );
+
+        if (!requester || !requester.fcmToken) {
+          console.log("Requester has no FCM token");
+          return null;
+        }
+
+        const message = {
+          notification: {
+            title: "❌ Repayment Request Rejected",
+            body: `Your request to repay ${removedRepayment.beers} ` +
+              `beer(s) for ${removedRepayment.playerName} was rejected`,
+          },
+          data: {
+            type: "repayment_rejected",
+            scoreboardId: event.params.scoreboardId,
+            scoreboardName: afterData.name,
+          },
+          token: requester.fcmToken,
+        };
+
+        await admin.messaging().send(message);
+        console.log(`Repayment rejection notification sent`);
+        return null;
+      } catch (error) {
+        console.error("Error sending repayment rejection notification:", error);
+        return null;
+      }
+    },
+);
+
+// Send notification when reset request is rejected
+exports.onResetRejected = onDocumentUpdated(
+    {
+      document: "scoreboards/{scoreboardId}",
+      region: "europe-west3",
+    },
+    async (event) => {
+      const beforeData = event.data.before.data();
+      const afterData = event.data.after.data();
+
+      // Check if reset was rejected (had pendingReset, now gone, scores same)
+      const hadPendingReset = beforeData.pendingReset !== undefined;
+      const noPendingResetNow = afterData.pendingReset === undefined;
+
+      if (!hadPendingReset || !noPendingResetNow) {
+        return null;
+      }
+
+      // Check if scores were reset (if yes, it was confirmed, not rejected)
+      const allScoresZero = afterData.players.every(
+          (p) => p.score === 0 &&
+            (p.totalScore === undefined || p.totalScore === 0),
+      );
+
+      // If scores were reset, it was confirmed
+      if (allScoresZero) {
+        return null;
+      }
+
+      // Reset was rejected
+      try {
+        // Get all users
+        const usersSnapshot = await admin
+            .firestore()
+            .collection("users")
+            .get();
+        const users = {};
+        usersSnapshot.forEach((doc) => {
+          users[doc.id] = doc.data();
+        });
+
+        // Find the user who requested reset
+        const requester = Object.values(users).find(
+            (u) => u.id === beforeData.pendingReset.requestedBy,
+        );
+
+        if (!requester || !requester.fcmToken) {
+          console.log("Requester has no FCM token");
+          return null;
+        }
+
+        const message = {
+          notification: {
+            title: "❌ Reset Request Rejected",
+            body: `Your request to reset "${afterData.name}" was rejected`,
+          },
+          data: {
+            type: "reset_rejected",
+            scoreboardId: event.params.scoreboardId,
+            scoreboardName: afterData.name,
+          },
+          token: requester.fcmToken,
+        };
+
+        await admin.messaging().send(message);
+        console.log(`Reset rejection notification sent`);
+        return null;
+      } catch (error) {
+        console.error("Error sending reset rejection notification:", error);
+        return null;
+      }
+    },
+);
+
+// Send notification when pending reset is requested
+exports.onPendingResetAdded = onDocumentUpdated(
+    {
+      document: "scoreboards/{scoreboardId}",
+      region: "europe-west3",
+    },
+    async (event) => {
+      const beforeData = event.data.before.data();
+      const afterData = event.data.after.data();
+
+      // Check if a pending reset was added
+      if (!beforeData.pendingReset && afterData.pendingReset) {
+        const pendingReset = afterData.pendingReset;
+
+        try {
+          // Get all users
+          const usersSnapshot = await admin
+              .firestore()
+              .collection("users")
+              .get();
+          const users = {};
+          usersSnapshot.forEach((doc) => {
+            users[doc.id] = doc.data();
+          });
+
+          // Send notifications to all players except requester
+          const notifications = afterData.players.map(async (player) => {
+            const user = Object.values(users).find(
+                (u) => u.name === player.name &&
+                  u.id !== pendingReset.requestedBy,
+            );
+
+            if (!user || !user.fcmToken) {
+              console.log(`Player ${player.name} has no FCM token`);
+              return null;
+            }
+
+            const message = {
+              data: {
+                type: "pending_reset",
+                scoreboardId: event.params.scoreboardId,
+                scoreboardName: afterData.name,
+                title: "🔄 Reset Request",
+                body: `${pendingReset.requestedByName} wants to ` +
+                  `reset "${afterData.name}" to 0:0`,
+              },
+              token: user.fcmToken,
+            };
+
+            await admin.messaging().send(message);
+            console.log(`Reset request notification sent to ${player.name}`);
+          });
+
+          await Promise.all(notifications);
+          return null;
+        } catch (error) {
+          console.error("Error sending reset request notification:", error);
+          return null;
+        }
+      }
+
+      return null;
+    },
+);
+
+// Send notification when scoreboard reset is confirmed
+exports.onScoreboardReset = onDocumentUpdated(
+    {
+      document: "scoreboards/{scoreboardId}",
+      region: "europe-west3",
+    },
+    async (event) => {
+      const beforeData = event.data.before.data();
+      const afterData = event.data.after.data();
+
+      // Only process active scoreboards
+      if (afterData.status !== "active") {
+        return null;
+      }
+
+      // Check if reset was confirmed (pendingReset removed and scores reset)
+      const hadPendingReset = beforeData.pendingReset !== undefined;
+      const noPendingResetNow = afterData.pendingReset === undefined;
+      const allScoresZero = afterData.players.every(
+          (p) => p.score === 0 &&
+            (p.totalScore === undefined || p.totalScore === 0),
+      );
+
+      // Only notify if this was a confirmed reset
+      if (!hadPendingReset || !noPendingResetNow || !allScoresZero) {
+        return null;
+      }
+
+      try {
+        // Get all users to find FCM tokens
+        const usersSnapshot = await admin
+            .firestore()
+            .collection("users")
+            .get();
+        const users = {};
+        usersSnapshot.forEach((doc) => {
+          users[doc.id] = doc.data();
+        });
+
+        // Send notification to all players
+        const notifications = afterData.players.map(async (player) => {
+          const user = Object.values(users).find(
+              (u) => u.name === player.name,
+          );
+
+          if (!user || !user.fcmToken) {
+            console.log(`Player ${player.name} has no FCM token`);
+            return null;
+          }
+
+          const message = {
+            notification: {
+              title: "🔄 Scoreboard Reset",
+              body: `All scores in "${afterData.name}" have been reset to 0`,
+            },
+            data: {
+              type: "scoreboard_reset",
+              scoreboardId: event.params.scoreboardId,
+              scoreboardName: afterData.name,
+            },
+            token: user.fcmToken,
+          };
+
+          await admin.messaging().send(message);
+          console.log(`Reset notification sent to ${player.name}`);
+        });
+
+        await Promise.all(notifications);
+        return null;
+      } catch (error) {
+        console.error("Error sending reset notification:", error);
+        return null;
+      }
+    },
+);

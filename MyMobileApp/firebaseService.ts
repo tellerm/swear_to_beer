@@ -4,6 +4,7 @@ export interface Player {
   id: string;
   name: string;
   score: number;
+  totalScore?: number;
 }
 
 export interface PendingPointChange {
@@ -16,6 +17,23 @@ export interface PendingPointChange {
   timestamp: Date;
 }
 
+export interface PendingBeerRepayment {
+  id: string;
+  playerId: string;
+  playerName: string;
+  beers: number;
+  requestedBy: string;
+  requestedByName: string;
+  timestamp: Date;
+}
+
+export interface PendingReset {
+  id: string;
+  requestedBy: string;
+  requestedByName: string;
+  timestamp: Date;
+}
+
 export interface Scoreboard {
   id: string;
   name: string;
@@ -25,6 +43,8 @@ export interface Scoreboard {
   createdBy: string;
   status: 'pending' | 'active' | 'rejected';
   pendingPointChanges?: PendingPointChange[];
+  pendingBeerRepayments?: PendingBeerRepayment[];
+  pendingReset?: PendingReset;
 }
 
 export interface User {
@@ -218,10 +238,14 @@ class FirebaseService {
         throw new Error('Pending change not found');
       }
 
-      // Update player score
+      // Update player score and totalScore
       const updatedPlayers = scoreboard.players.map((player) =>
         player.id === pendingChange.playerId
-          ? { ...player, score: player.score + pendingChange.points }
+          ? {
+              ...player,
+              score: player.score + pendingChange.points,
+              totalScore: (player.totalScore || player.score) + pendingChange.points
+            }
           : player
       );
 
@@ -261,8 +285,165 @@ class FirebaseService {
     }
   }
 
+  // Pending beer repayments
+  async addPendingBeerRepayment(
+    scoreboardId: string,
+    playerId: string,
+    playerName: string,
+    beers: number,
+    requestedBy: string,
+    requestedByName: string
+  ): Promise<void> {
+    try {
+      const pendingRepayment: PendingBeerRepayment = {
+        id: Date.now().toString(),
+        playerId,
+        playerName,
+        beers,
+        requestedBy,
+        requestedByName,
+        timestamp: new Date(),
+      };
+
+      await this.scoreboardsCollection.doc(scoreboardId).update({
+        pendingBeerRepayments: firestore.FieldValue.arrayUnion(pendingRepayment),
+      });
+    } catch (error) {
+      console.error('Error adding pending beer repayment:', error);
+      throw error;
+    }
+  }
+
+  async confirmPendingBeerRepayment(scoreboardId: string, repaymentId: string): Promise<void> {
+    try {
+      const scoreboardDoc = await this.scoreboardsCollection.doc(scoreboardId).get();
+      if (!scoreboardDoc.exists) {
+        throw new Error('Scoreboard not found');
+      }
+
+      const scoreboard = scoreboardDoc.data() as Scoreboard;
+
+      if (!scoreboard.pendingBeerRepayments || scoreboard.pendingBeerRepayments.length === 0) {
+        throw new Error('Pending repayment not found');
+      }
+
+      const pendingRepayment = scoreboard.pendingBeerRepayments.find(
+        (repayment) => repayment.id === repaymentId
+      );
+
+      if (!pendingRepayment) {
+        throw new Error('Pending repayment not found');
+      }
+
+      // Update player score (reduce by beer count)
+      const updatedPlayers = scoreboard.players.map((player) =>
+        player.id === pendingRepayment.playerId
+          ? { ...player, score: Math.max(0, player.score - pendingRepayment.beers) }
+          : player
+      );
+
+      // Remove pending repayment
+      const updatedPendingRepayments = scoreboard.pendingBeerRepayments?.filter(
+        (repayment) => repayment.id !== repaymentId
+      );
+
+      await this.scoreboardsCollection.doc(scoreboardId).update({
+        players: updatedPlayers,
+        pendingBeerRepayments: updatedPendingRepayments || [],
+      });
+    } catch (error) {
+      console.error('Error confirming pending beer repayment:', error);
+      throw error;
+    }
+  }
+
+  async rejectPendingBeerRepayment(scoreboardId: string, repaymentId: string): Promise<void> {
+    try {
+      const scoreboardDoc = await this.scoreboardsCollection.doc(scoreboardId).get();
+      if (!scoreboardDoc.exists) {
+        throw new Error('Scoreboard not found');
+      }
+
+      const scoreboard = scoreboardDoc.data() as Scoreboard;
+      const updatedPendingRepayments = scoreboard.pendingBeerRepayments?.filter(
+        (repayment) => repayment.id !== repaymentId
+      );
+
+      await this.scoreboardsCollection.doc(scoreboardId).update({
+        pendingBeerRepayments: updatedPendingRepayments || [],
+      });
+    } catch (error) {
+      console.error('Error rejecting pending beer repayment:', error);
+      throw error;
+    }
+  }
+
+  // Pending reset
+  async addPendingReset(
+    scoreboardId: string,
+    requestedBy: string,
+    requestedByName: string
+  ): Promise<void> {
+    try {
+      const pendingReset: PendingReset = {
+        id: Date.now().toString(),
+        requestedBy,
+        requestedByName,
+        timestamp: new Date(),
+      };
+
+      await this.scoreboardsCollection.doc(scoreboardId).update({
+        pendingReset: pendingReset,
+      });
+    } catch (error) {
+      console.error('Error adding pending reset:', error);
+      throw error;
+    }
+  }
+
+  async confirmPendingReset(scoreboardId: string): Promise<void> {
+    try {
+      const scoreboardDoc = await this.scoreboardsCollection.doc(scoreboardId).get();
+      if (!scoreboardDoc.exists) {
+        throw new Error('Scoreboard not found');
+      }
+
+      const scoreboard = scoreboardDoc.data() as Scoreboard;
+
+      if (!scoreboard.pendingReset) {
+        throw new Error('Pending reset not found');
+      }
+
+      // Reset all players scores to 0
+      const resetPlayers = scoreboard.players.map(player => ({
+        ...player,
+        score: 0,
+        totalScore: 0,
+      }));
+
+      await this.scoreboardsCollection.doc(scoreboardId).update({
+        players: resetPlayers,
+        pendingReset: firestore.FieldValue.delete(),
+      });
+    } catch (error) {
+      console.error('Error confirming pending reset:', error);
+      throw error;
+    }
+  }
+
+  async rejectPendingReset(scoreboardId: string): Promise<void> {
+    try {
+      await this.scoreboardsCollection.doc(scoreboardId).update({
+        pendingReset: firestore.FieldValue.delete(),
+      });
+    } catch (error) {
+      console.error('Error rejecting pending reset:', error);
+      throw error;
+    }
+  }
+
   // Real-time listeners
-  subscribeToScoreboards(callback: (scoreboards: Scoreboard[]) => void): () => void {
+  subscribeToScoreboards(currentUserName: string, callback: (scoreboards: Scoreboard[]) => void): () => void {
     const unsubscribe = this.scoreboardsCollection
       .orderBy('createdAt', 'desc')
       .onSnapshot(
@@ -275,7 +456,13 @@ class FirebaseService {
               createdAt: data.createdAt?.toDate() || new Date(),
             };
           }) as Scoreboard[];
-          callback(scoreboards);
+
+          // Filter to only include scoreboards where the current user is a player
+          const userScoreboards = scoreboards.filter(scoreboard =>
+            scoreboard.players.some(player => player.name === currentUserName)
+          );
+
+          callback(userScoreboards);
         },
         (error) => {
           console.error('Error in scoreboards subscription:', error);

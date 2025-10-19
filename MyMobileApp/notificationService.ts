@@ -103,6 +103,55 @@ class NotificationService {
           type: data.type,
         },
       });
+    } else if (data.type === 'pending_beer_repayment') {
+      await notifee.displayNotification({
+        title: data.title,
+        body: data.body,
+        android: {
+          channelId: 'scoreboard_actions',
+          importance: AndroidImportance.HIGH,
+          actions: [
+            {
+              title: '✓ Confirm',
+              pressAction: { id: 'confirm_repayment', launchActivity: 'default' },
+            },
+            {
+              title: '✗ Reject',
+              pressAction: { id: 'reject_repayment', launchActivity: 'default' },
+            },
+          ],
+        },
+        data: {
+          scoreboardId: data.scoreboardId,
+          scoreboardName: data.scoreboardName,
+          repaymentId: data.repaymentId,
+          type: data.type,
+        },
+      });
+    } else if (data.type === 'pending_reset') {
+      await notifee.displayNotification({
+        title: data.title,
+        body: data.body,
+        android: {
+          channelId: 'scoreboard_actions',
+          importance: AndroidImportance.HIGH,
+          actions: [
+            {
+              title: '✓ Confirm',
+              pressAction: { id: 'confirm_reset', launchActivity: 'default' },
+            },
+            {
+              title: '✗ Reject',
+              pressAction: { id: 'reject_reset', launchActivity: 'default' },
+            },
+          ],
+        },
+        data: {
+          scoreboardId: data.scoreboardId,
+          scoreboardName: data.scoreboardName,
+          type: data.type,
+        },
+      });
     }
   }
 
@@ -116,7 +165,10 @@ class NotificationService {
     // Handle foreground messages
     const unsubscribe = messaging().onMessage(async remoteMessage => {
       console.log('Foreground notification:', remoteMessage);
-      if (remoteMessage.data?.type === 'new_scoreboard' || remoteMessage.data?.type === 'pending_point_added') {
+      if (remoteMessage.data?.type === 'new_scoreboard' ||
+          remoteMessage.data?.type === 'pending_point_added' ||
+          remoteMessage.data?.type === 'pending_beer_repayment' ||
+          remoteMessage.data?.type === 'pending_reset') {
         await this.displayNotificationWithActions(remoteMessage.data);
       }
       onMessageReceived(remoteMessage);
@@ -125,7 +177,10 @@ class NotificationService {
     // Handle background/quit state messages
     messaging().setBackgroundMessageHandler(async remoteMessage => {
       console.log('Background notification:', remoteMessage);
-      if (remoteMessage.data?.type === 'new_scoreboard' || remoteMessage.data?.type === 'pending_point_added') {
+      if (remoteMessage.data?.type === 'new_scoreboard' ||
+          remoteMessage.data?.type === 'pending_point_added' ||
+          remoteMessage.data?.type === 'pending_beer_repayment' ||
+          remoteMessage.data?.type === 'pending_reset') {
         await this.displayNotificationWithActions(remoteMessage.data);
       }
     });

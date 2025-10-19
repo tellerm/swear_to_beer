@@ -42,7 +42,7 @@ function App() {
     let unsubscribe: (() => void) | null = null;
 
     if (currentUser) {
-      unsubscribe = firebaseService.subscribeToScoreboards((newScoreboards) => {
+      unsubscribe = firebaseService.subscribeToScoreboards(currentUser.name, (newScoreboards) => {
         setScoreboards(newScoreboards);
       });
     }
@@ -91,6 +91,20 @@ function App() {
         } else if (action === 'reject_point' && data.changeId) {
           console.log('Rejecting point from notification:', data.changeId);
           await firebaseService.rejectPendingPointChange(data.scoreboardId, data.changeId);
+        } else if (action === 'confirm_repayment' && data.repaymentId) {
+          console.log('Confirming repayment from notification:', data.repaymentId);
+          await firebaseService.confirmPendingBeerRepayment(data.scoreboardId, data.repaymentId);
+          console.log('Successfully confirmed repayment from notification');
+        } else if (action === 'reject_repayment' && data.repaymentId) {
+          console.log('Rejecting repayment from notification:', data.repaymentId);
+          await firebaseService.rejectPendingBeerRepayment(data.scoreboardId, data.repaymentId);
+        } else if (action === 'confirm_reset') {
+          console.log('Confirming reset from notification');
+          await firebaseService.confirmPendingReset(data.scoreboardId);
+          console.log('Successfully confirmed reset from notification');
+        } else if (action === 'reject_reset') {
+          console.log('Rejecting reset from notification');
+          await firebaseService.rejectPendingReset(data.scoreboardId);
         }
       } catch (error: any) {
         console.error('Error handling notification action:', error);
@@ -145,8 +159,8 @@ function App() {
         name: name,
         type: type,
         players: [
-          { id: '1', name: currentUser!.name, score: 0 },
-          { id: '2', name: competitor.name, score: 0 },
+          { id: '1', name: currentUser!.name, score: 0, totalScore: 0 },
+          { id: '2', name: competitor.name, score: 0, totalScore: 0 },
         ],
         createdAt: new Date(),
         createdBy: currentUser!.id,
@@ -734,18 +748,20 @@ function ScoreboardScreen({ scoreboard, currentUser, onBack, onScoreboardUpdate,
     }
 
     try {
-      const updatedPlayers = players.map(player =>
-        player.id === repayingPlayer.id
-          ? { ...player, score: player.score - beersToRepay }
-          : player
+      await firebaseService.addPendingBeerRepayment(
+        scoreboard.id,
+        repayingPlayer.id,
+        repayingPlayer.name,
+        beersToRepay,
+        currentUser.id,
+        currentUser.name
       );
-      await firebaseService.updateScoreboard(scoreboard.id, { players: updatedPlayers });
       setShowRepayModal(false);
       setRepayingPlayer(null);
       setRepayAmount('');
     } catch (error) {
-      console.error('Error repaying beers:', error);
-      Alert.alert('Error', 'Failed to repay beers. Please try again.');
+      console.error('Error requesting beer repayment:', error);
+      Alert.alert('Error', 'Failed to request beer repayment. Please try again.');
     }
   };
 
@@ -775,6 +791,71 @@ function ScoreboardScreen({ scoreboard, currentUser, onBack, onScoreboardUpdate,
     }
   };
 
+  const confirmPendingRepayment = async (repaymentId: string) => {
+    try {
+      console.log('Attempting to confirm pending repayment:', repaymentId);
+      await firebaseService.confirmPendingBeerRepayment(scoreboard.id, repaymentId);
+      console.log('Successfully confirmed pending repayment:', repaymentId);
+    } catch (error: any) {
+      console.error('Error confirming pending repayment:', error);
+      if (error.message === 'Pending repayment not found') {
+        Alert.alert('Repayment Request No Longer Valid', 'This repayment request has been cancelled or already processed.');
+      } else {
+        Alert.alert('Error', 'Failed to confirm repayment. Please try again.');
+      }
+    }
+  };
+
+  const rejectPendingRepayment = async (repaymentId: string) => {
+    try {
+      console.log('Deleting pending repayment:', repaymentId);
+      await firebaseService.rejectPendingBeerRepayment(scoreboard.id, repaymentId);
+      console.log('Successfully deleted pending repayment:', repaymentId);
+    } catch (error) {
+      console.error('Error rejecting pending repayment:', error);
+      Alert.alert('Error', 'Failed to reject repayment. Please try again.');
+    }
+  };
+
+  const netOutScores = async () => {
+    if (players.length !== 2) return;
+
+    const score1 = players[0].score;
+    const score2 = players[1].score;
+    const minScore = Math.min(score1, score2);
+
+    if (minScore === 0) {
+      Alert.alert('Already Balanced', 'Scores are already at their net difference.');
+      return;
+    }
+
+    Alert.alert(
+      'Net Out Scores',
+      `This will change scores from ${score1}:${score2} to ${score1 - minScore}:${score2 - minScore}. Continue?`,
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Net Out',
+          onPress: async () => {
+            try {
+              const updatedPlayers = players.map(player => ({
+                ...player,
+                score: player.score - minScore,
+              }));
+              await firebaseService.updateScoreboard(scoreboard.id, { players: updatedPlayers });
+            } catch (error) {
+              console.error('Error netting out scores:', error);
+              Alert.alert('Error', 'Failed to net out scores. Please try again.');
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const renderRightActions = (
     progress: Animated.AnimatedInterpolation<number>,
     dragX: Animated.AnimatedInterpolation<number>,
@@ -798,30 +879,88 @@ function ScoreboardScreen({ scoreboard, currentUser, onBack, onScoreboardUpdate,
     );
   };
 
-  const resetScores = () => {
-    Alert.alert(
-      'Reset Scoreboard',
-      'Are you sure you want to reset all scores?',
-      [
-        {
-          text: 'Cancel',
-          style: 'cancel',
-        },
-        {
-          text: 'Reset',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              const resetPlayers = players.map(player => ({ ...player, score: 0 }));
-              await firebaseService.updateScoreboard(scoreboard.id, { players: resetPlayers });
-            } catch (error) {
-              console.error('Error resetting scores:', error);
-              Alert.alert('Error', 'Failed to reset scores. Please try again.');
-            }
-          },
-        },
-      ]
+  const renderRightActionsForRepayment = (
+    progress: Animated.AnimatedInterpolation<number>,
+    dragX: Animated.AnimatedInterpolation<number>,
+    repaymentId: string
+  ) => {
+    const trans = dragX.interpolate({
+      inputRange: [-100, 0],
+      outputRange: [1, 0],
+      extrapolate: 'clamp',
+    });
+
+    return (
+      <TouchableOpacity
+        style={styles.deleteAction}
+        onPress={() => rejectPendingRepayment(repaymentId)}
+      >
+        <Animated.View style={[styles.deleteActionContent, { opacity: trans }]}>
+          <Text style={styles.deleteActionText}>Delete</Text>
+        </Animated.View>
+      </TouchableOpacity>
     );
+  };
+
+  const renderRightActionsForReset = (
+    progress: Animated.AnimatedInterpolation<number>,
+    dragX: Animated.AnimatedInterpolation<number>
+  ) => {
+    const trans = dragX.interpolate({
+      inputRange: [-100, 0],
+      outputRange: [1, 0],
+      extrapolate: 'clamp',
+    });
+
+    return (
+      <TouchableOpacity
+        style={styles.deleteAction}
+        onPress={() => rejectPendingReset()}
+      >
+        <Animated.View style={[styles.deleteActionContent, { opacity: trans }]}>
+          <Text style={styles.deleteActionText}>Delete</Text>
+        </Animated.View>
+      </TouchableOpacity>
+    );
+  };
+
+  const resetScores = async () => {
+    try {
+      await firebaseService.addPendingReset(
+        scoreboard.id,
+        currentUser.id,
+        currentUser.name
+      );
+    } catch (error) {
+      console.error('Error requesting reset:', error);
+      Alert.alert('Error', 'Failed to request reset. Please try again.');
+    }
+  };
+
+  const confirmPendingReset = async () => {
+    try {
+      console.log('Attempting to confirm pending reset');
+      await firebaseService.confirmPendingReset(scoreboard.id);
+      console.log('Successfully confirmed pending reset');
+    } catch (error: any) {
+      console.error('Error confirming pending reset:', error);
+      if (error.message === 'Pending reset not found') {
+        Alert.alert('Reset Request No Longer Valid', 'This reset request has been cancelled or already processed.');
+      } else {
+        Alert.alert('Error', 'Failed to confirm reset. Please try again.');
+      }
+    }
+  };
+
+  const rejectPendingReset = async () => {
+    try {
+      console.log('Deleting pending reset');
+      await firebaseService.rejectPendingReset(scoreboard.id);
+      console.log('Successfully deleted pending reset');
+    } catch (error) {
+      console.error('Error rejecting pending reset:', error);
+      Alert.alert('Error', 'Failed to reject reset. Please try again.');
+    }
   };
 
   const leaveCompetition = () => {
@@ -971,15 +1110,24 @@ function ScoreboardScreen({ scoreboard, currentUser, onBack, onScoreboardUpdate,
           <Text style={[styles.subtitle, textStyle]}>
             Points = Beers owed! 🍺
           </Text>
+          <Text style={[styles.fullScore, textStyle]}>
+            Full Score: {players[0]?.totalScore ?? players[0]?.score ?? 0}:{players[1]?.totalScore ?? players[1]?.score ?? 0}
+          </Text>
         </View>
 
         {/* Players side by side */}
         <View style={styles.scoreboardRow}>
         {players && players.map(player => (
           <View key={player.id} style={styles.playerCard}>
-            <Text style={[styles.playerName, textStyle]}>{player.name}</Text>
-            <View style={styles.scoreRow}>
-              <Text style={styles.score}>{player.score}</Text>
+            <Text style={styles.playerName}>{player.name}</Text>
+            <Text style={styles.score}>{player.score}</Text>
+            <View style={styles.actionButtons}>
+              <TouchableOpacity
+                style={styles.addButton}
+                onPress={() => addPoint(player.id, player.name)}
+              >
+                <Text style={styles.addButtonText}>+</Text>
+              </TouchableOpacity>
               <TouchableOpacity
                 style={styles.beerButton}
                 onPress={() => repayBeers(player.id, player.name, player.score)}
@@ -987,12 +1135,6 @@ function ScoreboardScreen({ scoreboard, currentUser, onBack, onScoreboardUpdate,
                 <Text style={styles.beerIcon}>🍺</Text>
               </TouchableOpacity>
             </View>
-            <TouchableOpacity
-              style={styles.addButton}
-              onPress={() => addPoint(player.id, player.name)}
-            >
-              <Text style={styles.addButtonText}>+ Add Point</Text>
-            </TouchableOpacity>
           </View>
         ))}
       </View>
@@ -1000,7 +1142,7 @@ function ScoreboardScreen({ scoreboard, currentUser, onBack, onScoreboardUpdate,
       {/* Pending Point Changes */}
       {currentScoreboard.pendingPointChanges && currentScoreboard.pendingPointChanges.length > 0 && (
         <View style={styles.pendingChangesContainer}>
-          <Text style={styles.pendingChangesTitle}>⏳ Pending Changes</Text>
+          <Text style={styles.pendingChangesTitle}>⏳ Pending Point Changes</Text>
           {currentScoreboard.pendingPointChanges.map((change) => {
             const pendingCardContent = (
               <View style={styles.pendingChangeCard}>
@@ -1048,6 +1190,100 @@ function ScoreboardScreen({ scoreboard, currentUser, onBack, onScoreboardUpdate,
           })}
         </View>
       )}
+
+      {/* Pending Reset */}
+      {currentScoreboard.pendingReset && (
+        <View style={styles.pendingChangesContainer}>
+          <Text style={styles.pendingChangesTitle}>🔄 Pending Reset Request</Text>
+          {currentScoreboard.pendingReset.requestedBy === currentUser.id ? (
+            <Swipeable
+              renderRightActions={(progress, dragX) =>
+                renderRightActionsForReset(progress, dragX)
+              }
+              overshootRight={false}
+            >
+              <View style={styles.pendingChangeCard}>
+                <Text style={styles.pendingChangeText}>
+                  {currentScoreboard.pendingReset.requestedByName} wants to reset the scoreboard to 0:0
+                </Text>
+                <Text style={styles.waitingText}>Waiting for confirmation... (Swipe left to cancel)</Text>
+              </View>
+            </Swipeable>
+          ) : (
+            <View style={styles.pendingChangeCard}>
+              <Text style={styles.pendingChangeText}>
+                {currentScoreboard.pendingReset.requestedByName} wants to reset the scoreboard to 0:0
+              </Text>
+              <View style={styles.pendingChangeActions}>
+                <TouchableOpacity
+                  style={styles.confirmButton}
+                  onPress={() => confirmPendingReset()}
+                >
+                  <Text style={styles.confirmButtonText}>✓ Confirm</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.rejectChangeButton}
+                  onPress={() => rejectPendingReset()}
+                >
+                  <Text style={styles.rejectChangeButtonText}>✗ Reject</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+        </View>
+      )}
+
+      {/* Pending Beer Repayments */}
+      {currentScoreboard.pendingBeerRepayments && currentScoreboard.pendingBeerRepayments.length > 0 && (
+        <View style={styles.pendingChangesContainer}>
+          <Text style={styles.pendingChangesTitle}>🍺 Pending Beer Repayments</Text>
+          {currentScoreboard.pendingBeerRepayments.map((repayment) => {
+            const repaymentCardContent = (
+              <View style={styles.pendingChangeCard}>
+                <Text style={styles.pendingChangeText}>
+                  {repayment.requestedByName} wants to repay {repayment.beers} beer(s) for {repayment.playerName}
+                </Text>
+                {repayment.requestedBy !== currentUser.id && (
+                  <View style={styles.pendingChangeActions}>
+                    <TouchableOpacity
+                      style={styles.confirmButton}
+                      onPress={() => confirmPendingRepayment(repayment.id)}
+                    >
+                      <Text style={styles.confirmButtonText}>✓ Confirm</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.rejectChangeButton}
+                      onPress={() => rejectPendingRepayment(repayment.id)}
+                    >
+                      <Text style={styles.rejectChangeButtonText}>✗ Reject</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+                {repayment.requestedBy === currentUser.id && (
+                  <Text style={styles.waitingText}>Waiting for confirmation... (Swipe left to cancel)</Text>
+                )}
+              </View>
+            );
+
+            // Only allow swipe-to-delete for repayments the current user created
+            if (repayment.requestedBy === currentUser.id) {
+              return (
+                <Swipeable
+                  key={repayment.id}
+                  renderRightActions={(progress, dragX) =>
+                    renderRightActionsForRepayment(progress, dragX, repayment.id)
+                  }
+                  overshootRight={false}
+                >
+                  {repaymentCardContent}
+                </Swipeable>
+              );
+            }
+
+            return <View key={repayment.id}>{repaymentCardContent}</View>;
+          })}
+        </View>
+      )}
       </ScrollView>
 
       <View style={[
@@ -1056,11 +1292,14 @@ function ScoreboardScreen({ scoreboard, currentUser, onBack, onScoreboardUpdate,
         isDarkMode ? styles.footerDark : styles.footerLight
       ]}>
         <View style={styles.buttonRow}>
+          <TouchableOpacity style={styles.netOutButton} onPress={netOutScores}>
+            <Text style={styles.netOutButtonText}>Net Out</Text>
+          </TouchableOpacity>
           <TouchableOpacity style={styles.resetButton} onPress={resetScores}>
-            <Text style={styles.resetButtonText}>Reset Scoreboard</Text>
+            <Text style={styles.resetButtonText}>Reset</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.leaveButton} onPress={leaveCompetition}>
-            <Text style={styles.leaveButtonText}>Leave Competition</Text>
+            <Text style={styles.leaveButtonText}>Leave</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -1144,6 +1383,11 @@ const styles = StyleSheet.create({
     fontSize: 16,
     opacity: 0.7,
   },
+  fullScore: {
+    fontSize: 14,
+    opacity: 0.6,
+    marginTop: 5,
+  },
   scoreboard: {
     flex: 1,
     justifyContent: 'center',
@@ -1159,7 +1403,7 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#fff',
     borderRadius: 15,
-    padding: 15,
+    padding: 20,
     alignItems: 'center',
     shadowColor: '#000',
     shadowOffset: {
@@ -1173,27 +1417,25 @@ const styles = StyleSheet.create({
   playerName: {
     fontSize: 20,
     fontWeight: '600',
-    marginBottom: 8,
+    marginBottom: 15,
     color: '#333',
   },
-  scoreRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginBottom: 12,
-  },
   score: {
-    fontSize: 40,
+    fontSize: 48,
     fontWeight: 'bold',
     color: '#e74c3c',
+    marginBottom: 20,
   },
-  beerButton: {
-    backgroundColor: '#fff',
-    width: 45,
-    height: 45,
-    borderRadius: 22.5,
-    borderWidth: 2,
-    borderColor: '#e74c3c',
+  actionButtons: {
+    flexDirection: 'row',
+    gap: 15,
+    alignItems: 'center',
+  },
+  addButton: {
+    backgroundColor: '#e74c3c',
+    width: 50,
+    height: 50,
+    borderRadius: 25,
     justifyContent: 'center',
     alignItems: 'center',
     shadowColor: '#000',
@@ -1201,23 +1443,47 @@ const styles = StyleSheet.create({
       width: 0,
       height: 2,
     },
-    shadowOpacity: 0.15,
+    shadowOpacity: 0.2,
     shadowRadius: 3,
-    elevation: 3,
-  },
-  beerIcon: {
-    fontSize: 24,
-  },
-  addButton: {
-    backgroundColor: '#e74c3c',
-    paddingHorizontal: 20,
-    paddingVertical: 8,
-    borderRadius: 20,
+    elevation: 4,
   },
   addButtonText: {
     color: '#fff',
-    fontSize: 13,
-    fontWeight: '600',
+    fontSize: 28,
+    fontWeight: '300',
+    lineHeight: 28,
+  },
+  beerButton: {
+    backgroundColor: '#fff',
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    borderWidth: 1,
+    borderColor: '#f39c12',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
+    elevation: 4,
+  },
+  beerIcon: {
+    fontSize: 26,
+  },
+  netOutButton: {
+    backgroundColor: '#3498db',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 20,
+  },
+  netOutButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '500',
   },
   scrollContainer: {
     flex: 1,
@@ -1740,6 +2006,7 @@ const styles = StyleSheet.create({
     marginBottom: 20,
     borderWidth: 2,
     borderColor: '#f39c12',
+    color: '#f39c12',
   },
   modalButtons: {
     flexDirection: 'row',
