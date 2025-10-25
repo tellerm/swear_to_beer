@@ -1,4 +1,15 @@
 {
   "name": "SwearToBeer",
-  "displayName": "Swear to Beer"
+  "displayName": "Swear to Beer",
+  "ios": {
+    "bundleIdentifier": "com.tellermarek.sweartobeer"
+  },
+  "android": {
+    "package": "com.tellermarek.sweartobeer"
+  },
+  "extra": {
+    "eas": {
+      "projectId": "d501495e-0bec-41b3-a412-bd2918ba13c9"
+    }
+  }
 }
