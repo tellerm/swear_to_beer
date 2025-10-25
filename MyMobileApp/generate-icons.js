@@ -30,7 +30,7 @@ async function generateAndroidIcons() {
   console.log('Generating Android icons...');
 
   for (const { folder, size } of androidSizes) {
-    const dir = path.join('/mnt/c/Projects/swear_to_beer/MyMobileApp/android/app/src/main/res', folder);
+    const dir = path.join(__dirname, 'android/app/src/main/res', folder);
 
     // Create directory if it doesn't exist
     if (!fs.existsSync(dir)) {
@@ -64,7 +64,7 @@ async function generateAndroidIcons() {
 async function generateIOSIcons() {
   console.log('Generating iOS icons...');
 
-  const iosIconDir = '/mnt/c/Projects/swear_to_beer/MyMobileApp/ios/MyMobileApp/Images.xcassets/AppIcon.appiconset';
+  const iosIconDir = path.join(__dirname, 'ios/MyMobileApp/Images.xcassets/AppIcon.appiconset');
 
   // Create directory if it doesn't exist
   if (!fs.existsSync(iosIconDir)) {
