@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  mariadb:
+    image: mariadb:10.11
+    container_name: moodle-db
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: moodle
+      MYSQL_USER: moodleuser
+      MYSQL_PASSWORD: moodlepassword
+    volumes:
+      - moodle-db-data:/var/lib/mysql
+    networks:
+      - moodle-network
+    restart: unless-stopped
+
+  moodle:
+    image: jhardison/moodle:latest
+    container_name: moodle
+    depends_on:
+      - mariadb
+    environment:
+      DB_PORT_3306_TCP_ADDR: mariadb
+      DB_PORT_3306_TCP_PORT: 3306
+      DB_ENV_MYSQL_DATABASE: moodle
+      DB_ENV_MYSQL_USER: moodleuser
+      DB_ENV_MYSQL_PASSWORD: moodlepassword
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - moodle-data:/var/moodledata
+    networks:
+      - moodle-network
+    restart: unless-stopped
+
+volumes:
+  moodle-db-data:
+  moodle-data:
+
+networks:
+  moodle-network:
+    driver: bridge

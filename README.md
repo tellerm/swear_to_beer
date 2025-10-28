@@ -10,3 +10,4 @@ TO DO:
 [x] add time when the request was created
 [x] scoreboard should show there are pending requests
 [ ] adjust tags
+[ ] organize scoreboard by the competitor
