@@ -58,11 +58,11 @@ We will create a mobile app. The programming language will be react-native. We w
 ## React Native Project Initialization Results
 
 ### ✅ Project Created Successfully:
-- **Project Name**: MyMobileApp
+- **Project Name**: SwearToBeer
 - **React Native Version**: 0.81.4 ✅ (Latest stable)
 - **React Version**: 19.1.0 ✅ (Latest stable)
 - **TypeScript**: Enabled ✅
-- **Location**: `/mnt/c/Projects/swear_to_beer/MyMobileApp/`
+- **Location**: `/mnt/c/Projects/swear_to_beer/SwearToBeer/`
 
 ### 📁 Project Structure:
 - ✅ Standard React Native project structure created
@@ -277,7 +277,7 @@ After renaming the app to "SwearToBeer", the React Native app failed to connect 
 # 1. Open PowerShell as Administrator (RIGHT-CLICK → "Run as administrator")
 
 # 2. Navigate to project directory
-cd "C:\Projects\swear_to_beer\MyMobileApp"
+cd "C:\Projects\swear_to_beer\SwearToBeer"
 
 # 3. Start Metro bundler with cache reset
 npx react-native start --reset-cache
