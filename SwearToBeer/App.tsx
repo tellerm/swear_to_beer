@@ -38,12 +38,6 @@ function App() {
   const [availableUsers, setAvailableUsers] = useState<User[]>([]);
   const [scoreboards, setScoreboards] = useState<Scoreboard[]>([]);
 
-  // DEBUG: Test if JavaScript is running
-  useEffect(() => {
-    console.log('App component mounted - JavaScript is running!');
-    Alert.alert('Debug', 'App started successfully! JavaScript is working.');
-  }, []);
-
   useEffect(() => {
     let unsubscribe: (() => void) | null = null;
 
