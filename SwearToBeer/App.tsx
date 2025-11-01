@@ -375,6 +375,19 @@ function MainScreen({ scoreboards, onScoreboardPress, currentUser, onLogout, onC
 }) {
   const safeAreaInsets = useSafeAreaInsets();
   const isDarkMode = useColorScheme() === 'dark';
+  const [expandedOpponents, setExpandedOpponents] = useState<Set<string>>(new Set());
+
+  // One-time migration: Remove "general" tags from existing scoreboards
+  useEffect(() => {
+    const runMigration = async () => {
+      try {
+        await firebaseService.removeGeneralTags();
+      } catch (error) {
+        console.error('Migration error:', error);
+      }
+    };
+    runMigration();
+  }, []);
 
   const containerStyle = [
     styles.container,
@@ -386,6 +399,36 @@ function MainScreen({ scoreboards, onScoreboardPress, currentUser, onLogout, onC
   ];
 
   const textStyle = isDarkMode ? styles.darkText : styles.lightText;
+
+  // Group scoreboards by opponent
+  const groupedScoreboards = React.useMemo(() => {
+    const groups: { [opponentName: string]: Scoreboard[] } = {};
+
+    scoreboards.forEach(scoreboard => {
+      // Find the opponent (the player who is not the current user)
+      const opponent = scoreboard.players.find(player => player.name !== currentUser.name);
+      if (opponent) {
+        if (!groups[opponent.name]) {
+          groups[opponent.name] = [];
+        }
+        groups[opponent.name].push(scoreboard);
+      }
+    });
+
+    return groups;
+  }, [scoreboards, currentUser.name]);
+
+  const toggleOpponent = (opponentName: string) => {
+    setExpandedOpponents(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(opponentName)) {
+        newSet.delete(opponentName);
+      } else {
+        newSet.add(opponentName);
+      }
+      return newSet;
+    });
+  };
 
   const handleAcceptScoreboard = async (scoreboard: Scoreboard) => {
     try {
@@ -474,72 +517,119 @@ function MainScreen({ scoreboards, onScoreboardPress, currentUser, onLogout, onC
         <View style={styles.section}>
           <Text style={[styles.sectionTitle, textStyle]}>Active Scoreboards</Text>
 
-          {scoreboards.map(scoreboard => {
-            const pendingCount = getPendingRequestsCount(scoreboard);
-            return (
-              <TouchableOpacity
-                key={scoreboard.id}
-                style={[
-                  styles.scoreboardCard,
-                  scoreboard.status === 'pending' && styles.scoreboardCardPending
-                ]}
-                onPress={() => onScoreboardPress(scoreboard)}
-              >
-                <View style={styles.cardHeader}>
-                  <Text style={[
-                    styles.cardTitle,
-                    scoreboard.status === 'pending' && styles.pendingText
-                  ]}>{scoreboard.name}</Text>
-                  <View style={styles.cardHeaderRight}>
-                    {pendingCount > 0 && (
-                      <View style={styles.pendingBadge}>
-                        <Text style={styles.pendingBadgeText}>{pendingCount}</Text>
+          {Object.keys(groupedScoreboards).length === 0 ? (
+            <Text style={[styles.emptyText, textStyle]}>
+              No scoreboards yet. Create one to get started!
+            </Text>
+          ) : (
+            Object.entries(groupedScoreboards).map(([opponentName, opponentScoreboards]) => {
+              const isExpanded = expandedOpponents.has(opponentName);
+              const totalPending = opponentScoreboards.reduce((sum, sb) => sum + getPendingRequestsCount(sb), 0);
+
+              return (
+                <View key={opponentName} style={styles.competitorGroup}>
+                  {/* Competitor Header */}
+                  <TouchableOpacity
+                    style={styles.competitorHeader}
+                    onPress={() => toggleOpponent(opponentName)}
+                  >
+                    <View style={styles.competitorHeaderLeft}>
+                      <View style={styles.avatar}>
+                        <Text style={styles.avatarText}>
+                          {opponentName.charAt(0).toUpperCase()}
+                        </Text>
                       </View>
-                    )}
-                    <Text style={styles.cardType}>
-                      {scoreboard.status === 'pending' ? 'Pending' : scoreboard.type}
-                    </Text>
-                  </View>
-                </View>
-              <View style={styles.cardStats}>
-                {scoreboard.players.map(player => (
-                  <View key={player.id} style={styles.playerStat}>
-                    <Text
-                      style={[
-                        styles.playerStatName,
-                        scoreboard.status === 'pending' && styles.pendingText
-                      ]}
-                      numberOfLines={1}
-                      ellipsizeMode="tail"
-                    >
-                      {player.name}
-                    </Text>
-                    <Text style={[
-                      styles.playerStatScore,
-                      scoreboard.status === 'pending' && styles.pendingText
-                    ]}>{player.score}</Text>
-                  </View>
-                ))}
-              </View>
-              {scoreboard.status === 'pending' && scoreboard.createdBy !== currentUser.id && (
-                <View style={styles.pendingActions}>
-                  <TouchableOpacity
-                    style={styles.acceptButton}
-                    onPress={() => handleAcceptScoreboard(scoreboard)}
-                  >
-                    <Text style={styles.acceptButtonText}>Accept</Text>
+                      <View style={styles.competitorInfo}>
+                        <Text style={styles.competitorName}>{opponentName}</Text>
+                        <Text style={styles.competitorCount}>
+                          {opponentScoreboards.length} scoreboard{opponentScoreboards.length !== 1 ? 's' : ''}
+                        </Text>
+                      </View>
+                    </View>
+                    <View style={styles.competitorHeaderRight}>
+                      {totalPending > 0 && (
+                        <View style={styles.pendingBadge}>
+                          <Text style={styles.pendingBadgeText}>{totalPending}</Text>
+                        </View>
+                      )}
+                      <Text style={styles.expandIcon}>{isExpanded ? '▼' : '▶'}</Text>
+                    </View>
                   </TouchableOpacity>
-                  <TouchableOpacity
-                    style={styles.rejectButton}
-                    onPress={() => handleRejectScoreboard(scoreboard)}
-                  >
-                    <Text style={styles.rejectButtonText}>Reject</Text>
-                  </TouchableOpacity>
+
+                  {/* Collapsible Scoreboard List */}
+                  {isExpanded && opponentScoreboards.map(scoreboard => {
+                    const pendingCount = getPendingRequestsCount(scoreboard);
+                    return (
+                      <TouchableOpacity
+                        key={scoreboard.id}
+                        style={[
+                          styles.scoreboardCard,
+                          styles.scoreboardCardNested,
+                          scoreboard.status === 'pending' && styles.scoreboardCardPending
+                        ]}
+                        onPress={() => onScoreboardPress(scoreboard)}
+                      >
+                        <View style={styles.cardHeader}>
+                          <Text style={[
+                            styles.cardTitle,
+                            scoreboard.status === 'pending' && styles.pendingText
+                          ]}>{scoreboard.name}</Text>
+                          <View style={styles.cardHeaderRight}>
+                            {pendingCount > 0 && (
+                              <View style={styles.pendingBadge}>
+                                <Text style={styles.pendingBadgeText}>{pendingCount}</Text>
+                              </View>
+                            )}
+                            {(scoreboard.status === 'pending' || scoreboard.type) && (
+                              <Text style={styles.cardType}>
+                                {scoreboard.status === 'pending' ? 'Pending' : scoreboard.type}
+                              </Text>
+                            )}
+                          </View>
+                        </View>
+                        <View style={styles.cardStats}>
+                          {scoreboard.players.map(player => (
+                            <View key={player.id} style={styles.playerStat}>
+                              <Text
+                                style={[
+                                  styles.playerStatName,
+                                  scoreboard.status === 'pending' && styles.pendingText
+                                ]}
+                                numberOfLines={1}
+                                ellipsizeMode="tail"
+                              >
+                                {player.name}
+                              </Text>
+                              <Text style={[
+                                styles.playerStatScore,
+                                scoreboard.status === 'pending' && styles.pendingText
+                              ]}>{player.score}</Text>
+                            </View>
+                          ))}
+                        </View>
+                        {scoreboard.status === 'pending' && scoreboard.createdBy !== currentUser.id && (
+                          <View style={styles.pendingActions}>
+                            <TouchableOpacity
+                              style={styles.acceptButton}
+                              onPress={() => handleAcceptScoreboard(scoreboard)}
+                            >
+                              <Text style={styles.acceptButtonText}>Accept</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              style={styles.rejectButton}
+                              onPress={() => handleRejectScoreboard(scoreboard)}
+                            >
+                              <Text style={styles.rejectButtonText}>Reject</Text>
+                            </TouchableOpacity>
+                          </View>
+                        )}
+                      </TouchableOpacity>
+                    );
+                  })}
                 </View>
-              )}
-            </TouchableOpacity>
-            );
-          })}
+              );
+            })
+          )}
         </View>
       </ScrollView>
 
@@ -567,6 +657,22 @@ function CreateScoreboardScreen({ currentUser, availableUsers, onBack, onCreateS
   const [scoreboardName, setScoreboardName] = useState('');
   const [selectedIcon, setSelectedIcon] = useState('🤬');
   const [selectedCompetitor, setSelectedCompetitor] = useState<User | null>(null);
+  const [availableTags, setAvailableTags] = useState<string[]>([]);
+  const [selectedTag, setSelectedTag] = useState<string>('');
+  const [newTagInput, setNewTagInput] = useState('');
+  const [showNewTagInput, setShowNewTagInput] = useState(false);
+
+  useEffect(() => {
+    const fetchTags = async () => {
+      try {
+        const tags = await firebaseService.getTags();
+        setAvailableTags(tags);
+      } catch (error) {
+        console.error('Error fetching tags:', error);
+      }
+    };
+    fetchTags();
+  }, []);
 
   const containerStyle = [
     styles.container,
@@ -580,7 +686,7 @@ function CreateScoreboardScreen({ currentUser, availableUsers, onBack, onCreateS
 
   const scoreboardIcons = ['🤬', '🍻', '🎯', '⚽', '🎮', '📚', '💪', '🏃', '🎵', '🍕'];
 
-  const handleCreate = () => {
+  const handleCreate = async () => {
     if (!scoreboardName.trim()) {
       Alert.alert('Error', 'Please enter a scoreboard name');
       return;
@@ -590,9 +696,24 @@ function CreateScoreboardScreen({ currentUser, availableUsers, onBack, onCreateS
       return;
     }
 
+    let tagToUse = selectedTag;
+
+    // If creating a new tag
+    if (showNewTagInput && newTagInput.trim()) {
+      const trimmedTag = newTagInput.trim();
+      try {
+        await firebaseService.createTag(trimmedTag);
+        tagToUse = trimmedTag;
+      } catch (error) {
+        console.error('Error creating tag:', error);
+        Alert.alert('Error', 'Failed to create tag. Please try again.');
+        return;
+      }
+    }
+
     onCreateScoreboard(
       scoreboardName.trim(),
-      'general',
+      tagToUse || '',
       selectedIcon,
       selectedCompetitor
     );
@@ -641,6 +762,71 @@ function CreateScoreboardScreen({ currentUser, availableUsers, onBack, onCreateS
               </TouchableOpacity>
             ))}
           </View>
+        </View>
+
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, textStyle]}>Add Tag (Optional)</Text>
+          <View style={styles.tagContainer}>
+            {/* No Tag Option */}
+            <TouchableOpacity
+              style={[
+                styles.tagOption,
+                selectedTag === '' && !showNewTagInput && styles.tagOptionSelected
+              ]}
+              onPress={() => {
+                setSelectedTag('');
+                setShowNewTagInput(false);
+                setNewTagInput('');
+              }}
+            >
+              <Text style={styles.tagText}>No Tag</Text>
+            </TouchableOpacity>
+
+            {/* Existing Tags */}
+            {availableTags.map(tag => (
+              <TouchableOpacity
+                key={tag}
+                style={[
+                  styles.tagOption,
+                  selectedTag === tag && styles.tagOptionSelected
+                ]}
+                onPress={() => {
+                  setSelectedTag(tag);
+                  setShowNewTagInput(false);
+                  setNewTagInput('');
+                }}
+              >
+                <Text style={styles.tagText}>{tag}</Text>
+              </TouchableOpacity>
+            ))}
+
+            {/* Add New Tag Button */}
+            <TouchableOpacity
+              style={[
+                styles.tagOption,
+                styles.addTagOption,
+                showNewTagInput && styles.tagOptionSelected
+              ]}
+              onPress={() => {
+                setShowNewTagInput(!showNewTagInput);
+                setSelectedTag('');
+              }}
+            >
+              <Text style={styles.tagText}>+ New Tag</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* New Tag Input */}
+          {showNewTagInput && (
+            <TextInput
+              style={[styles.input, isDarkMode && styles.inputDark, { marginTop: 10 }]}
+              placeholder="Enter new tag name..."
+              placeholderTextColor={isDarkMode ? '#666' : '#999'}
+              value={newTagInput}
+              onChangeText={setNewTagInput}
+              autoFocus
+            />
+          )}
         </View>
 
         <View style={styles.section}>
@@ -1742,9 +1928,62 @@ const styles = StyleSheet.create({
     shadowRadius: 3.84,
     elevation: 5,
   },
+  scoreboardCardNested: {
+    marginLeft: 15,
+    marginRight: 0,
+  },
   scoreboardCardPending: {
     backgroundColor: '#e0e0e0',
     opacity: 0.7,
+  },
+  competitorGroup: {
+    marginBottom: 20,
+  },
+  competitorHeader: {
+    backgroundColor: '#fff',
+    borderRadius: 15,
+    padding: 15,
+    marginBottom: 10,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.1,
+    shadowRadius: 3.84,
+    elevation: 5,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  competitorHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  competitorHeaderRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  competitorInfo: {
+    marginLeft: 15,
+    flex: 1,
+  },
+  competitorName: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 2,
+  },
+  competitorCount: {
+    fontSize: 14,
+    color: '#666',
+  },
+  expandIcon: {
+    fontSize: 16,
+    color: '#666',
+    fontWeight: 'bold',
   },
   pendingText: {
     color: '#888',
@@ -2007,6 +2246,31 @@ const styles = StyleSheet.create({
   },
   iconText: {
     fontSize: 20,
+  },
+  tagContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  tagOption: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 20,
+    backgroundColor: '#f0f0f0',
+    borderWidth: 2,
+    borderColor: 'transparent',
+  },
+  tagOptionSelected: {
+    borderColor: '#3498db',
+    backgroundColor: '#e3f2fd',
+  },
+  addTagOption: {
+    backgroundColor: '#e8f5e9',
+  },
+  tagText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#333',
   },
   userOption: {
     backgroundColor: '#fff',

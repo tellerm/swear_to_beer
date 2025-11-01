@@ -59,6 +59,7 @@ export interface User {
 class FirebaseService {
   private usersCollection = firestore().collection('users');
   private scoreboardsCollection = firestore().collection('scoreboards');
+  private tagsCollection = firestore().collection('tags');
 
   // User management
   async createUser(user: User): Promise<User> {
@@ -111,6 +112,45 @@ class FirebaseService {
       return user;
     } catch (error) {
       console.error('Error validating login:', error);
+      throw error;
+    }
+  }
+
+  // Tag management
+  async getTags(): Promise<string[]> {
+    try {
+      const snapshot = await this.tagsCollection.get();
+      return snapshot.docs.map(doc => doc.id);
+    } catch (error) {
+      console.error('Error getting tags:', error);
+      return [];
+    }
+  }
+
+  async createTag(tagName: string): Promise<void> {
+    try {
+      // Use the tag name as the document ID to prevent duplicates
+      await this.tagsCollection.doc(tagName).set({ createdAt: firestore.FieldValue.serverTimestamp() });
+    } catch (error) {
+      console.error('Error creating tag:', error);
+      throw error;
+    }
+  }
+
+  // One-time migration: Remove "general" tag from all scoreboards
+  async removeGeneralTags(): Promise<void> {
+    try {
+      const snapshot = await this.scoreboardsCollection.where('type', '==', 'general').get();
+      const batch = firestore().batch();
+
+      snapshot.docs.forEach(doc => {
+        batch.update(doc.ref, { type: '' });
+      });
+
+      await batch.commit();
+      console.log(`Updated ${snapshot.docs.length} scoreboards to remove "general" tag`);
+    } catch (error) {
+      console.error('Error removing general tags:', error);
       throw error;
     }
   }
