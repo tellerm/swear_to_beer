@@ -27,6 +27,14 @@ export interface PendingBeerRepayment {
   timestamp: Date;
 }
 
+export interface PendingBet {
+  id: string;
+  description: string;
+  createdBy: string;
+  createdByName: string;
+  timestamp: Date;
+}
+
 export interface PendingReset {
   id: string;
   requestedBy: string;
@@ -44,6 +52,8 @@ export interface Scoreboard {
   status: 'pending' | 'active' | 'rejected';
   pendingPointChanges?: PendingPointChange[];
   pendingBeerRepayments?: PendingBeerRepayment[];
+  betsEnabled?: boolean;
+  pendingBets?: PendingBet[];
   pendingReset?: PendingReset;
 }
 
@@ -414,6 +424,100 @@ class FirebaseService {
       });
     } catch (error) {
       console.error('Error rejecting pending beer repayment:', error);
+      throw error;
+    }
+  }
+
+  // Pending bets
+  async addPendingBet(
+    scoreboardId: string,
+    description: string,
+    createdBy: string,
+    createdByName: string
+  ): Promise<void> {
+    try {
+      const pendingBet: PendingBet = {
+        id: Date.now().toString(),
+        description,
+        createdBy,
+        createdByName,
+        timestamp: new Date(),
+      };
+
+      await this.scoreboardsCollection.doc(scoreboardId).update({
+        pendingBets: firestore.FieldValue.arrayUnion(pendingBet),
+      });
+    } catch (error) {
+      console.error('Error adding pending bet:', error);
+      throw error;
+    }
+  }
+
+  async resolvePendingBet(
+    scoreboardId: string,
+    betId: string,
+    winnerId: string,
+    winnerName: string,
+    resolvedBy: string,
+    resolvedByName: string
+  ): Promise<void> {
+    try {
+      const scoreboardDoc = await this.scoreboardsCollection.doc(scoreboardId).get();
+      if (!scoreboardDoc.exists) {
+        throw new Error('Scoreboard not found');
+      }
+
+      const scoreboard = scoreboardDoc.data() as Scoreboard;
+
+      if (!scoreboard.pendingBets || scoreboard.pendingBets.length === 0) {
+        throw new Error('Pending bet not found');
+      }
+
+      const bet = scoreboard.pendingBets.find((b) => b.id === betId);
+      if (!bet) {
+        throw new Error('Pending bet not found');
+      }
+
+      // Remove the bet and add a pending point change
+      const updatedPendingBets = scoreboard.pendingBets.filter((b) => b.id !== betId);
+
+      const pendingChange: PendingPointChange = {
+        id: Date.now().toString(),
+        playerId: winnerId,
+        playerName: winnerName,
+        points: 1,
+        addedBy: resolvedBy,
+        addedByName: resolvedByName,
+        timestamp: new Date(),
+      };
+
+      await this.scoreboardsCollection.doc(scoreboardId).update({
+        pendingBets: updatedPendingBets,
+        pendingPointChanges: firestore.FieldValue.arrayUnion(pendingChange),
+      });
+    } catch (error) {
+      console.error('Error resolving pending bet:', error);
+      throw error;
+    }
+  }
+
+  async deletePendingBet(scoreboardId: string, betId: string): Promise<void> {
+    try {
+      const scoreboardDoc = await this.scoreboardsCollection.doc(scoreboardId).get();
+      if (!scoreboardDoc.exists) {
+        throw new Error('Scoreboard not found');
+      }
+
+      const scoreboard = scoreboardDoc.data() as Scoreboard;
+      const updatedPendingBets = scoreboard.pendingBets?.filter(
+        (bet) => bet.id !== betId
+      );
+
+      await this.scoreboardsCollection.doc(scoreboardId).update({
+        pendingBets: updatedPendingBets || [],
+      });
+    } catch (error) {
+      console.error('Error deleting pending bet:', error);
       throw error;
     }
   }

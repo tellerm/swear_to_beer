@@ -153,11 +153,12 @@ function App() {
     setCurrentScreen('createScoreboard');
   };
 
-  const createNewScoreboard = async (name: string, type: string, icon: string, competitor: User) => {
+  const createNewScoreboard = async (name: string, type: string, icon: string, competitor: User, betsEnabled: boolean) => {
     try {
       const newScoreboard = {
         name: name,
         type: type,
+        betsEnabled: betsEnabled,
         players: [
           { id: '1', name: currentUser!.name, score: 0, totalScore: 0 },
           { id: '2', name: competitor.name, score: 0, totalScore: 0 },
@@ -472,6 +473,7 @@ function MainScreen({ scoreboards, onScoreboardPress, currentUser, onLogout, onC
     let count = 0;
     count += scoreboard.pendingPointChanges?.length || 0;
     count += scoreboard.pendingBeerRepayments?.length || 0;
+    count += scoreboard.pendingBets?.length || 0;
     count += scoreboard.pendingReset ? 1 : 0;
     return count;
   };
@@ -580,7 +582,7 @@ function MainScreen({ scoreboards, onScoreboardPress, currentUser, onLogout, onC
                                 <Text style={styles.pendingBadgeText}>{pendingCount}</Text>
                               </View>
                             )}
-                            {(scoreboard.status === 'pending' || scoreboard.type) && (
+                            {(scoreboard.status === 'pending' || (scoreboard.type && scoreboard.type.trim())) && (
                               <Text style={styles.cardType}>
                                 {scoreboard.status === 'pending' ? 'Pending' : scoreboard.type}
                               </Text>
@@ -650,7 +652,7 @@ function CreateScoreboardScreen({ currentUser, availableUsers, onBack, onCreateS
   currentUser: User;
   availableUsers: User[];
   onBack: () => void;
-  onCreateScoreboard: (name: string, type: string, icon: string, competitor: User) => void;
+  onCreateScoreboard: (name: string, type: string, icon: string, competitor: User, betsEnabled: boolean) => void;
 }) {
   const safeAreaInsets = useSafeAreaInsets();
   const isDarkMode = useColorScheme() === 'dark';
@@ -661,6 +663,7 @@ function CreateScoreboardScreen({ currentUser, availableUsers, onBack, onCreateS
   const [selectedTag, setSelectedTag] = useState<string>('');
   const [newTagInput, setNewTagInput] = useState('');
   const [showNewTagInput, setShowNewTagInput] = useState(false);
+  const [betsEnabled, setBetsEnabled] = useState(false);
 
   useEffect(() => {
     const fetchTags = async () => {
@@ -715,7 +718,8 @@ function CreateScoreboardScreen({ currentUser, availableUsers, onBack, onCreateS
       scoreboardName.trim(),
       tagToUse || '',
       selectedIcon,
-      selectedCompetitor
+      selectedCompetitor,
+      betsEnabled
     );
   };
 
@@ -830,6 +834,21 @@ function CreateScoreboardScreen({ currentUser, availableUsers, onBack, onCreateS
         </View>
 
         <View style={styles.section}>
+          <Text style={[styles.sectionTitle, textStyle]}>Enable Bets</Text>
+          <TouchableOpacity
+            style={styles.betsToggleRow}
+            onPress={() => setBetsEnabled(!betsEnabled)}
+          >
+            <View style={[styles.betsToggle, betsEnabled && styles.betsToggleActive]}>
+              <View style={[styles.betsToggleThumb, betsEnabled && styles.betsToggleThumbActive]} />
+            </View>
+            <Text style={[styles.betsToggleText, textStyle]}>
+              {betsEnabled ? 'Bets enabled — track what the bet is about' : 'No bets — just track points'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.section}>
           <Text style={[styles.sectionTitle, textStyle]}>Select Competitor</Text>
           {availableUsers.length === 0 ? (
             <Text style={[styles.emptyText, textStyle]}>
@@ -900,6 +919,8 @@ function ScoreboardScreen({ scoreboard, currentUser, onBack, onScoreboardUpdate,
   const [showRepayModal, setShowRepayModal] = useState(false);
   const [repayingPlayer, setRepayingPlayer] = useState<{ id: string; name: string; score: number } | null>(null);
   const [repayAmount, setRepayAmount] = useState('');
+  const [showBetModal, setShowBetModal] = useState(false);
+  const [betDescription, setBetDescription] = useState('');
 
   const formatTimestamp = (timestamp: any): string => {
     let then: Date;
@@ -1073,6 +1094,86 @@ function ScoreboardScreen({ scoreboard, currentUser, onBack, onScoreboardUpdate,
       console.error('Error requesting beer repayment:', error);
       Alert.alert('Error', 'Failed to request beer repayment. Please try again.');
     }
+  };
+
+  const createBet = async () => {
+    if (!betDescription.trim()) {
+      Alert.alert('Invalid Bet', 'Please enter a bet description.');
+      return;
+    }
+
+    if (!currentScoreboard || !players || players.length === 0) {
+      Alert.alert('Error', 'Scoreboard is no longer available.');
+      setShowBetModal(false);
+      setBetDescription('');
+      return;
+    }
+
+    try {
+      await firebaseService.addPendingBet(
+        scoreboard.id,
+        betDescription.trim(),
+        currentUser.id,
+        currentUser.name
+      );
+      setShowBetModal(false);
+      setBetDescription('');
+    } catch (error) {
+      console.error('Error creating bet:', error);
+      Alert.alert('Error', 'Failed to create bet. Please try again.');
+    }
+  };
+
+  const resolveBet = async (betId: string, winnerId: string, winnerName: string) => {
+    try {
+      await firebaseService.resolvePendingBet(
+        scoreboard.id,
+        betId,
+        winnerId,
+        winnerName,
+        currentUser.id,
+        currentUser.name
+      );
+    } catch (error: any) {
+      console.error('Error resolving bet:', error);
+      if (error.message === 'Pending bet not found') {
+        Alert.alert('Bet No Longer Valid', 'This bet has been cancelled or already resolved.');
+      } else {
+        Alert.alert('Error', 'Failed to resolve bet. Please try again.');
+      }
+    }
+  };
+
+  const deleteBet = async (betId: string) => {
+    try {
+      await firebaseService.deletePendingBet(scoreboard.id, betId);
+    } catch (error) {
+      console.error('Error deleting bet:', error);
+      Alert.alert('Error', 'Failed to delete bet. Please try again.');
+    }
+  };
+
+  const renderRightActionsForBet = (
+    progress: Animated.AnimatedInterpolation<number>,
+    dragX: Animated.AnimatedInterpolation<number>,
+    betId: string
+  ) => {
+    const trans = dragX.interpolate({
+      inputRange: [-100, 0],
+      outputRange: [1, 0],
+      extrapolate: 'clamp',
+    });
+
+    return (
+      <TouchableOpacity
+        style={styles.deleteAction}
+        onPress={() => deleteBet(betId)}
+      >
+        <Animated.View style={[styles.deleteActionContent, { opacity: trans }]}>
+          <Text style={styles.deleteActionText}>Delete</Text>
+        </Animated.View>
+      </TouchableOpacity>
+    );
   };
 
   const confirmPendingChange = async (changeId: string) => {
@@ -1485,6 +1586,56 @@ function ScoreboardScreen({ scoreboard, currentUser, onBack, onScoreboardUpdate,
         ))}
       </View>
 
+      {/* Pending Bets */}
+      {currentScoreboard.pendingBets && currentScoreboard.pendingBets.length > 0 && (
+        <View style={styles.pendingChangesContainer}>
+          <Text style={styles.pendingChangesTitle}>🎲 Open Bets</Text>
+          {currentScoreboard.pendingBets.map((bet) => {
+            const betCardContent = (
+              <View style={styles.pendingChangeCard}>
+                <View style={styles.pendingChangeHeader}>
+                  <Text style={styles.betDescriptionText}>
+                    "{bet.description}"
+                  </Text>
+                  <Text style={styles.pendingChangeText}>
+                    created by {bet.createdByName}
+                  </Text>
+                  <Text style={styles.timestampText}>
+                    {formatTimestamp(bet.timestamp)}
+                  </Text>
+                </View>
+                <View style={styles.betResolveContainer}>
+                  <Text style={styles.betResolveLabel}>Assign point to:</Text>
+                  <View style={styles.betResolveButtons}>
+                    {players.map((player) => (
+                      <TouchableOpacity
+                        key={player.id}
+                        style={styles.betResolveButton}
+                        onPress={() => resolveBet(bet.id, player.id, player.name)}
+                      >
+                        <Text style={styles.betResolveButtonText} numberOfLines={1}>{player.name}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
+              </View>
+            );
+
+            return (
+              <Swipeable
+                key={bet.id}
+                renderRightActions={bet.createdBy === currentUser.id
+                  ? (progress, dragX) => renderRightActionsForBet(progress, dragX, bet.id)
+                  : undefined}
+                overshootRight={false}
+              >
+                {betCardContent}
+              </Swipeable>
+            );
+          })}
+        </View>
+      )}
+
       {/* Pending Point Changes */}
       {currentScoreboard.pendingPointChanges && currentScoreboard.pendingPointChanges.length > 0 && (
         <View style={styles.pendingChangesContainer}>
@@ -1658,6 +1809,11 @@ function ScoreboardScreen({ scoreboard, currentUser, onBack, onScoreboardUpdate,
         isDarkMode ? styles.footerDark : styles.footerLight
       ]}>
         <View style={styles.buttonRow}>
+          {currentScoreboard.betsEnabled && (
+            <TouchableOpacity style={styles.betButton} onPress={() => setShowBetModal(true)}>
+              <Text style={styles.betButtonText}>New Bet</Text>
+            </TouchableOpacity>
+          )}
           <TouchableOpacity style={styles.netOutButton} onPress={netOutScores}>
             <Text style={styles.netOutButtonText}>Net Out</Text>
           </TouchableOpacity>
@@ -1710,6 +1866,49 @@ function ScoreboardScreen({ scoreboard, currentUser, onBack, onScoreboardUpdate,
                 onPress={handleRepaySubmit}
               >
                 <Text style={styles.modalRepayButtonText}>Repay</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* New Bet Modal */}
+      <Modal
+        visible={showBetModal}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowBetModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>🎲 New Bet</Text>
+            <Text style={styles.modalSubtitle}>
+              What's the bet about?
+            </Text>
+            <TextInput
+              style={styles.betModalInput}
+              placeholder="e.g. Who finishes their drink first"
+              value={betDescription}
+              onChangeText={setBetDescription}
+              autoFocus={true}
+              multiline={true}
+              numberOfLines={3}
+            />
+            <View style={styles.modalButtons}>
+              <TouchableOpacity
+                style={styles.modalCancelButton}
+                onPress={() => {
+                  setShowBetModal(false);
+                  setBetDescription('');
+                }}
+              >
+                <Text style={styles.modalCancelButtonText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.betModalCreateButton}
+                onPress={createBet}
+              >
+                <Text style={styles.betModalCreateButtonText}>Create</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -2516,6 +2715,102 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   modalRepayButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  betsToggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  betsToggle: {
+    width: 50,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#ccc',
+    justifyContent: 'center',
+    paddingHorizontal: 2,
+  },
+  betsToggleActive: {
+    backgroundColor: '#8e44ad',
+  },
+  betsToggleThumb: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: '#fff',
+  },
+  betsToggleThumbActive: {
+    alignSelf: 'flex-end',
+  },
+  betsToggleText: {
+    fontSize: 14,
+    flex: 1,
+  },
+  betButton: {
+    backgroundColor: '#8e44ad',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 20,
+  },
+  betButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  betDescriptionText: {
+    fontSize: 15,
+    fontWeight: '600',
+    fontStyle: 'italic',
+    color: '#333',
+    marginBottom: 4,
+  },
+  betResolveContainer: {
+    marginTop: 8,
+  },
+  betResolveLabel: {
+    fontSize: 12,
+    color: '#666',
+    marginBottom: 6,
+  },
+  betResolveButtons: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  betResolveButton: {
+    flex: 1,
+    backgroundColor: '#8e44ad',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+    alignItems: 'center',
+  },
+  betResolveButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  betModalInput: {
+    backgroundColor: '#f5f5f5',
+    borderRadius: 10,
+    padding: 15,
+    fontSize: 16,
+    marginBottom: 20,
+    borderWidth: 2,
+    borderColor: '#8e44ad',
+    color: '#333',
+    minHeight: 80,
+    textAlignVertical: 'top',
+  },
+  betModalCreateButton: {
+    flex: 1,
+    backgroundColor: '#8e44ad',
+    paddingVertical: 15,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  betModalCreateButtonText: {
     color: '#fff',
     fontSize: 16,
     fontWeight: '600',
