@@ -336,4 +336,5 @@ npm install
 Get-ChildItem -Path "node_modules" -Recurse -Directory -Name ".bin" | ForEach-Object { Remove-Item -Path "node_modules\$_" -Recurse -Force }
 npx react-native start --reset-cache
 adb reverse tcp:8081 tcp:8081    /    adb -s RZCW50ZWKKJ reverse tcp:8081 tcp:8081
+adb install -r app\build\outputs\apk\release\app-release.apk
 ```

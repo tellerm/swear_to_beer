@@ -1588,8 +1588,8 @@ function ScoreboardScreen({ scoreboard, currentUser, onBack, onScoreboardUpdate,
 
       {/* Pending Bets */}
       {currentScoreboard.pendingBets && currentScoreboard.pendingBets.length > 0 && (
-        <View style={styles.pendingChangesContainer}>
-          <Text style={styles.pendingChangesTitle}>🎲 Open Bets</Text>
+        <View style={[styles.pendingChangesContainer, styles.betsContainer]}>
+          <Text style={styles.betsTitle}>🎲 Open Bets</Text>
           {currentScoreboard.pendingBets.map((bet) => {
             const betCardContent = (
               <View style={styles.pendingChangeCard}>
@@ -2077,8 +2077,9 @@ const styles = StyleSheet.create({
   },
   buttonRow: {
     flexDirection: 'row',
-    gap: 15,
+    gap: 10,
     justifyContent: 'center',
+    flexWrap: 'wrap',
   },
   resetButton: {
     backgroundColor: '#95a5a6',
@@ -2548,6 +2549,7 @@ const styles = StyleSheet.create({
     opacity: 0.6,
   },
   pendingChangesContainer: {
+    marginTop: 15,
     backgroundColor: '#fff',
     borderRadius: 12,
     padding: 15,
@@ -2747,6 +2749,15 @@ const styles = StyleSheet.create({
   betsToggleText: {
     fontSize: 14,
     flex: 1,
+  },
+  betsContainer: {
+    borderLeftColor: '#8e44ad',
+  },
+  betsTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 12,
+    color: '#8e44ad',
   },
   betButton: {
     backgroundColor: '#8e44ad',
